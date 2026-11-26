@@ -324,6 +324,11 @@ export async function readMessages(
       bot_id?: string;
       username?: string;
       text?: string;
+      blocks?: Array<{
+        type?: string;
+        text?: { text?: string };
+        elements?: Array<{ text?: string }>;
+      }>;
       thread_ts?: string;
       reply_count?: number;
     }>;
@@ -345,12 +350,19 @@ export async function readMessages(
       : m.username || m.bot_id || 'bot';
     const ms = Math.floor(parseFloat(m.ts) * 1000);
     const time = Number.isFinite(ms) ? new Date(ms).toISOString().replace('T', ' ').slice(0, 16) + 'Z' : m.ts;
+    // When a message has Block Kit section blocks, Slack flattens newlines in top-level m.text;
+    // prefer the section blocks' text so multi-line formatting is preserved on read.
+    const sectionText = (m.blocks || [])
+      .filter((b) => b.type === 'section' && b.text?.text)
+      .map((b) => b.text!.text!)
+      .join('\n\n')
+      .trim();
     messages.push({
       ts: m.ts,
       time,
       user,
       userId,
-      text: (m.text || '').trim(),
+      text: sectionText || (m.text || '').trim(),
       threadTs: m.thread_ts,
       replyCount: m.reply_count,
     });
@@ -452,6 +464,21 @@ export async function searchMessages(
   }));
 }
 
+function splitSectionChunks(text: string, maxLen = 2950): string[] {
+  if (text.length <= maxLen) return [text];
+  const chunks: string[] = [];
+  let remaining = text;
+  while (remaining.length > maxLen) {
+    let cut = remaining.lastIndexOf('\n\n', maxLen);
+    if (cut < maxLen * 0.4) cut = remaining.lastIndexOf('\n', maxLen);
+    if (cut < maxLen * 0.4) cut = maxLen;
+    chunks.push(remaining.slice(0, cut).trimEnd());
+    remaining = remaining.slice(cut).replace(/^\n+/, '');
+  }
+  if (remaining) chunks.push(remaining);
+  return chunks;
+}
+
 export async function replyMessage(
   account: AccountConfig,
   target: string,
@@ -487,7 +514,10 @@ export async function replyMessage(
 
   const blocks = wm
     ? JSON.stringify([
-        { type: 'section', text: { type: 'mrkdwn', text } },
+        ...splitSectionChunks(text).map((chunk) => ({
+          type: 'section',
+          text: { type: 'mrkdwn', text: chunk },
+        })),
         { type: 'context', elements: [{ type: 'mrkdwn', text: wm }] },
       ])
     : undefined;

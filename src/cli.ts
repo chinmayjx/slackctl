@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import fs from 'node:fs';
 import { getDefaultWatermark, loadStore, resolveAccount, saveStore } from './config.js';
 import { authAttach, authLogin, authLogout, authUse } from './auth.js';
 import { getDaemonHealth, slackCall, stopAllDaemons, stopDaemon } from './client.js';
@@ -295,7 +296,12 @@ async function main() {
 
     case 'reply': {
       const target = need(sub, 'channel, @user, me, or ID');
-      const text = need(rest.join(' '), 'message text');
+      const rawText = rest.join(' ');
+      const text =
+        rawText === '-'
+          ? fs.readFileSync(0, 'utf8').trimEnd()
+          : need(rawText, 'message text (or "-" to read from stdin)');
+      if (!text) throw new Error('Message text is empty.');
       const res = await replyMessage(account, target, text, {
         threadTs: strFlag(flags, 'thread'),
         broadcast: Boolean(flags.broadcast),
